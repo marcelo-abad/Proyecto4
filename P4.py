@@ -625,7 +625,254 @@ plt.show()
 # ### 4.3. - Densidad espectral de potencia
 # 
 # * (20%) Determine y grafique la densidad espectral de potencia para la señal modulada `senal_Tx`.
+from PIL import Image 
+import numpy as np 
+import matplotlib.pyplot as plt
+import time 
+from scipy import fft 
+ 
 
+# Modulador de funciones(4.1)
+
+def moduladorcos(bits, fc, mpp):
+   
+    N = len(bits)
+    Tc = 1 / fc  
+    t_periodo = np.linspace(0, Tc, mpp)
+    portadora_cos = np.cos(2*np.pi*fc*t_periodo)
+
+  
+    t_simulacion     = np.linspace(0, N*Tc, N*mpp) 
+    cos_senal_Tx   = np.zeros(t_simulacion.shape)
+    cos_modulado = np.zeros(t_simulacion.shape)  
+ 
+    
+    for i, bit in enumerate(bits):
+        if bit == 1:
+            cos_senal_Tx[i*mpp : (i+1)*mpp] = portadora_cos
+            cos_modulado[i*mpp : (i+1)*mpp] = 1
+        else:
+            cos_senal_Tx[i*mpp : (i+1)*mpp] = portadora_cos * -1
+            cos_modulado[i*mpp : (i+1)*mpp] = 0
+            
+    # Pot señal modulada.
+    Pmcoseno = (1 / (N*Tc)) * np.trapz(pow(cos_senal_Tx, 2), t_simulacion)
+    return cos_senal_Tx, Pmcoseno, portadora_cos, cos_modulado       
+            
+
+# Moduladora seno
+
+def modseno(bits, fc, mpp):
+   
+    N = len(bits) # Cantidad de bits
+    Tc = 1 / fc  
+    t_periodo = np.linspace(0, Tc, mpp)
+    portseno = np.cos(2*np.pi*fc*t_periodo)
+
+    # Inicializar la señal modulada s(t)
+    t_simulacion     = np.linspace(0, N*Tc, N*mpp) 
+    senal_Txseno   = np.zeros(t_simulacion.shape)
+    moduladoraseno = np.zeros(t_simulacion.shape) 
+ 
+    # Formas de onda según los bits
+    for i, bit in enumerate(bits):
+        if bit == 1:
+            senal_Txseno[i*mpp : (i+1)*mpp] = portseno
+            moduladoraseno[i*mpp : (i+1)*mpp] = 1
+        else:
+            senal_Txseno[i*mpp : (i+1)*mpp] = portseno * -1
+            moduladoraseno[i*mpp : (i+1)*mpp] = 0
+            
+    # Pot señal modulada
+    Pmseno = (1 / (N*Tc)) * np.trapz(pow(senal_Txseno, 2), t_simulacion)
+    
+    return senal_Txseno, Pmseno, portseno, moduladoraseno 
+
+def canal_ruidoso(signal_Txx, Pm, SNR):
+   
+    
+    Pn = Pm / pow(10, SNR/10)                                  
+    ruido = np.random.normal(0, np.sqrt(Pn), signal_Txx.shape) 
+    senal_Rx = signal_Txx + ruido                              
+   
+    return senal_Rx
+
+
+def demodulador(senal_Rx, portadora, mpp):
+    
+    
+     
+    M = len(senal_Rx) 
+    N = int(M / mpp) 
+    bits_Rx = np.zeros(N) 
+    senal_demodulada = np.zeros(M) 
+    Es = np.sum(portadora**2)
+
+    # Demodulación
+    for i in range(N):
+       
+        producto = senal_Rx[i*mpp : (i+1)*mpp] * portadora
+        senal_demodulada[i*mpp : (i+1)*mpp] = producto
+        Ep = np.sum(producto) 
+        if Ep > Es*0.8:
+            bits_Rx[i] = 1
+        else:
+            bits_Rx[i] = 0
+
+    return bits_Rx.astype(int), senal_demodulada
+
+
+
+def bits_a_rgb(bits_Rx, dimensiones):
+    N = len(bits_Rx)
+    bits = np.split(bits_Rx, N / 8)
+
+    # decodificacion de los canales
+    canales = [int(''.join(map(str, canal)), 2) for canal in bits]
+    pixeles = np.reshape(canales, dimensiones)
+
+    return pixeles.astype(np.uint8)
+
+
+fc = 10000  
+mpp = 30   
+SNR = 5   
+
+# tiempo de simulación
+inicio = time.time()
+
+# 1. Importar y convertir la imagen a trasmitir
+imagen_Tx = fuente_info('arenal.jpg')
+dimensiones = imagen_Tx.shape
+
+# 2. Codificar los pixeles de la imagen
+bits_Tx = rgb_a_bit(imagen_Tx)
+
+# 3.1 Moduladora coseno 
+cos_senal_Tx, Pmcoseno, portadora_cos, cos_modulado= moduladorcos(bits_Tx, fc, mpp)
+
+# 3.2 Moduladora seno
+senal_Txseno, Pmseno, portseno, moduladoraseno= modseno(bits_Tx, fc, mpp)
+
+#definiciones 
+
+portadora  = portadora_cos + portseno
+Pm         = Pmcoseno + Pmseno
+signal_Txx = cos_senal_Tx + senal_Txseno
+moduladora = cos_modulado + moduladoraseno
+
+# 4. Se transmite la señal modulada, por un canal ruidoso
+senal_Rx = canal_ruidoso(signal_Txx, Pm, SNR)
+
+# 5. Se desmodula la señal recibida del canal
+bits_Rx, senal_demodulada = demodulador(senal_Rx, portadora, mpp)
+
+# 6. Se visualiza la imagen recibida 
+imagen_Rx = bits_a_rgb(bits_Rx, dimensiones)
+Fig = plt.figure(figsize=(10,6))
+
+# Cálculo del tiempo de simulación
+print('Duración de la simulación: ', time.time() - inicio)
+
+# 7. Calcular número de errores
+errores = sum(abs(bits_Tx - bits_Rx))
+BER = errores/len(bits_Tx)
+print('{} errores, para un BER de {:0.4f}.'.format(errores, BER))
+
+# Mostrar imagen transmitida
+ax = Fig.add_subplot(1, 2, 1)
+imgplot = plt.imshow(imagen_Tx)
+ax.set_title('Transmitido')
+
+# Mostrar imagen recuperada
+ax = Fig.add_subplot(1, 2, 2)
+imgplot = plt.imshow(imagen_Rx)
+ax.set_title('Recuperado')
+Fig.tight_layout()
+
+plt.imshow(imagen_Rx)
+
+
+# Visualizar el cambio entre las señales
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, sharex=True, figsize=(14, 7))
+
+# La onda cuadrada moduladora (bits de entrada)
+ax1.plot(moduladora[0:600], color='r', lw=2) 
+ax1.set_ylabel('$b(t)$')
+
+# La señal modulada por BPSK
+ax2.plot(signal_Txx[0:600], color='g', lw=2) 
+ax2.set_ylabel('$s(t)$')
+
+# La señal modulada al dejar el canal
+ax3.plot(senal_Rx[0:600], color='b', lw=2) 
+ax3.set_ylabel('$s(t) + n(t)$')
+
+# La señal demodulada
+ax4.plot(senal_demodulada[0:600], color='m', lw=2) 
+ax4.set_ylabel('$b^{\prime}(t)$')
+ax4.set_xlabel('$t$ / milisegundos')
+fig.tight_layout()
+plt.show()
+
+
+# 4.2. Estacionariedad y ergodicida 
+
+t_final   = 0.1
+T_per     = 100
+tmuestreo = np.linspace(0, t_final, T_per)
+realizaciones = 4
+x_t = np.empty((realizaciones, len(tmuestreo)))	
+A_j = [-1,1]
+vacos =  np.cos(2*(np.pi)*fc*tmuestreo)
+vasen =  np.sin(2*(np.pi)*fc*tmuestreo)
+
+for i in A_j:
+    X = i*vacos + i*vasen 
+    Y = -i*vacos + i*vasen 
+    x_t[i,:] = X
+    x_t[i+1,:] = Y
+    plt.plot(tmuestreo, X)
+    plt.plot(tmuestreo, Y)
+
+
+# Promedio de las N realizaciones en cada instante (cada punto en t)
+P = [np.mean(x_t[:,i]) for i in range(len(tmuestreo))]
+plt.plot(tmuestreo, P, lw=6, color = '#0B5394', label = 'Promedio')
+
+# Grafica del valor esperado teorico
+E = np.mean(signal_Txx)*tmuestreo
+plt.plot(tmuestreo, E, '-.', lw=4, color='#EA9999', label = 'Teoico')
+
+#  realizaciones, promedio calculado y teórico
+plt.title('Realizaciones del proceso aleatorio $X(t)$')
+plt.xlabel('$t$')
+plt.ylabel('$x_i(t)$')
+plt.show()
+
+
+
+# 4.3 -dnsidad espectral de potencia 
+
+fourier = fft(signal_Txx)
+#Muestras de la señal
+Nm = len(signal_Txx) 
+#Número de símbolos
+Ns = Nm // mpp 
+# período de onda portadora
+Tc = 1/ fc    
+#Período muestreo
+Tm = Tc / mpp  
+#Tiempo simulación
+T = Ns * Tc        
+#Espacio de frecuencias
+f = np.linspace(0.0, 1.0/(2.0*Tm), Nm//2) 
+
+# Graficas
+plt.plot(f,2.0/Nm*np.power(np.abs(fourier[0:Nm//2]),2), color = '#EA9999')
+plt.xlim(0,30000)
+plt.grid()
+plt.show()
 # ---
 # 
 # ### Universidad de Costa Rica
